@@ -1,0 +1,300 @@
+---
+title: "COVID19"
+output: html_document
+date: "`r Sys.Date()`"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+### If you want to knit this report, please download the following packages if needed
+library(tidyverse)
+library(readr)
+library(stringr)
+library(ggplot2)
+```
+
+## About this Report
+
+China, as of one of the country which has the largest number of population and strict quarantine rules, has been paid lots of attention during the pandemic. In this report, we focus on answering the following questions: What is the temporal evolution and pattern of COVID-19 cases in China with the aim of gaining insights into the dynamics and trends of the pandemic? Comparing to the China, was US doing better or worse during this pandemic? We analyze data in national wide, few visualizations are used for analyzing and conclusion are given at the end of the report. 
+
+
+## About Data
+
+The data I used for this report is from Johns Hopkins github website.You can find it from the following link: https://github.com/CSSEGISandData/COVID-19/tree/master/csse_covid_19_data/csse_covid_19_time_series. "time_series_covid19_confirmed_global.csv" contains all confirmed cases in global wide. "time_series_covid19_deaths_global.csv" contains all death cases in global wide. "time_series_covid19_confirmed_US.csv" contains all confirmed COVID-19 cases in the US.
+"time_series_covid19_deaths_US.csv" contains all death cases in the US. The latest update as the time I saw was March 9th, 2023.
+
+First step, let us grab the files we need from github. Please notice that the link I use to load the files is different from the link I provided above for browing.
+
+```{r get_jhu_data}
+url_in <- "https://raw.githubusercontent.com/CSSEGISandData/COVID-19/master/csse_covid_19_data/csse_covid_19_time_series/"
+file_names <- c("time_series_covid19_confirmed_global.csv",
+                "time_series_covid19_deaths_global.csv",
+                "time_series_covid19_confirmed_US.csv",
+                "time_series_covid19_deaths_US.csv")
+urls <- str_c(url_in,file_names)
+```
+
+Import data from csv files.
+
+```{r import_data}
+global_cases = read_csv(urls[1],show_col_types = FALSE)
+global_deaths = read_csv(urls[2],show_col_types = FALSE)
+US_cases = read_csv(urls[3],show_col_types = FALSE)
+US_deaths = read_csv(urls[4],show_col_types = FALSE)
+```
+
+Let's take a look at all those data frames. We start with `global_cases`.
+```{r , echo=FALSE}
+# This chunk is just for looking at data, no need to show.
+head(global_cases)
+```
+
+`global_cases` has columns `Province/State`, `Country/Region`, `Lat` as Latitude, `Long` as Longitude, and total number of cases until that day everyday from `1/22/20` to `3/9/23`.
+
+What about `global_deaths`?
+
+```{r, echo=FALSE}
+# This chunk is just for looking at data, no need to show.
+head(global_deaths)
+```
+
+Similar to `global_cases`, `global_deaths` has same columns but instead of number of cases, these numbers under the dates are total number of deaths until that day.
+
+Now, let's take a look at `US_cases` and `US_deaths`.
+
+```{r, echo=FALSE}
+# This chunk is just for looking at data, no need to show.
+head(US_cases)
+head(US_deaths)
+```
+
+`US_cases` and `US_deaths` both contain `UID` as a unique ID of the counties, `ios2` and `iso3` are just US and USA, `code3` is code for US, `Admin2` as counties, `Province_Sate`, `Country_Region`, `Lat` as latitude, `Long` as longitude, `Combined_Key` and `Population` for the population of the certain county. `US_cases` has total number of cases until that day everyday from `1/22/20` to `3/9/23`. `US_deaths` has total number of deaths until that day everyday from `1/22/20` to `3/9/23`.
+
+## Tidying Data
+
+In order to analyze data in time series, in `global_caes` and `global_deaths` we create a column called `date` and store all the date in that column and a column `cases` and all total numbers of cases in it. We also remove the columns that we think are useless. 
+
+```{r tidy_global_data}
+# Add date and cases, remove Lat and Long.
+global_cases <- global_cases %>%
+     pivot_longer(cols = -c(`Province/State`,`Country/Region`,Lat,Long),
+                  names_to = "date",
+                  values_to = "cases") %>%
+     select(-c(Lat,Long))
+global_deaths <- global_deaths %>%
+     pivot_longer(cols = -c(`Province/State`,`Country/Region`,Lat,Long),
+                  names_to = "date",
+                  values_to = "deaths") %>%
+     select(-c(Lat,Long))
+```
+
+Let's combine `glocal_cases` and `global_deaths` together for future use and name the combined data frame `global`.
+
+```{r combine_global_cases_deaths}
+global = global_cases %>%
+  full_join(global_deaths) %>%
+  rename(Country_Region = `Country/Region`,
+         Province_State = `Province/State`) %>%
+  mutate(date = mdy(date))
+global = global %>% filter(cases>0)
+```
+
+```{r, echo=FALSE}
+head(global)
+```
+
+We now get a data frame with `cases` and `deaths` together.
+
+Now tidy the US cases and deaths in similar way and save in data frame called `US`.
+```{r tidy_US_data}
+#add date and cases, remove unnecessary columns.
+US_cases <- US_cases %>%
+  pivot_longer(cols = -c(UID:Combined_Key),
+               names_to = "date",
+               values_to = "cases") %>%
+  select(Admin2:cases) %>%
+  mutate(date = mdy(date)) %>%
+  select(-c(Lat,Long_))
+#add date and cases, remove unnecessary columns.
+US_deaths <- US_deaths %>%
+  pivot_longer(cols = -c(UID:Population),
+               names_to = "date",
+               values_to = "deaths") %>%
+  select(Admin2:deaths) %>%
+  mutate(date = mdy(date)) %>%
+  select(-c(Lat,Long_))
+#combine cases and deaths
+US <- US_cases %>%
+  full_join(US_deaths)
+```
+
+```{r, echo=FALSE}
+head(US)
+```
+
+Now our data are ready for use? No, few more steps need to be done before visualizations and modeling.
+
+Let's combine `Province_State` and `Country_Region` in `global` together and name it `Combined_Key`.
+```{r global_add_combined_key}
+global <- global %>%
+  unite("Combined_Key",
+        c(Province_State, Country_Region),
+        sep = ", ",
+        na.rm = TRUE,
+        remove = FALSE)
+```
+Add `population` to it.
+```{r global_population}
+uid_lookup_url <- "https://raw.githubusercontent.com/CSSEGISandData/COVID-19/master/csse_covid_19_data/UID_ISO_FIPS_LookUp_Table.csv"
+uid <- read_csv(uid_lookup_url) %>% select(-c(Lat, Long_, Combined_Key, code3, iso2, iso3, Admin2))
+
+global <-global %>%
+  left_join(uid, by = c("Province_State", "Country_Region")) %>%
+  select(-c(UID,FIPS)) %>%
+  select(Province_State, Country_Region, date, cases, deaths, Population,
+         Combined_Key)
+
+```
+
+```{r,echo=FALSE}
+head(global)
+```
+
+Since we are only comparing China and US, let us filter out the data of China from the global data and name the data frame `CN`
+
+```{r China}
+CN <- global %>%
+  filter(Country_Region == 'China')
+```
+
+Since we are only looking at the national wide, we create two new data frame called `CN_total` and `US_total`. Which only contain numbers in national wide.
+
+```{r CN_total}
+### If you take a closer look at the population of China by using sum(population), you will find there are lots of NAs. So instead of sum(Population), we use a rounded number of 1,400,000,000.
+CN_total <- CN %>%
+  group_by(date) %>%
+  summarize(cases = sum(cases), deaths = sum(deaths), Population = 1400000000) %>%
+  select(date, cases, deaths, Population) %>%
+  ungroup()
+```
+
+```{r US_total}
+### We do not have NA in Population. So we use sum(Population).
+US_total <- US %>%
+  group_by(date) %>%
+  summarize(cases = sum(cases), deaths = sum(deaths), Population = sum(Population)) %>%
+  select(date, cases, deaths, Population)
+```
+## Data Visualizations
+
+First, let us look at the rate of confirmed cases of China and US by time. To do that we need to create data frames contains `confirmed_rate`.
+
+```{r China_conirmed_rate}
+CN_rate <- CN %>%
+  group_by(date) %>%
+  summarize(cases = sum(cases), Population = 1400000000) %>%
+  mutate(rate = cases/Population) %>%
+  select(date,rate) %>%
+  ungroup()
+```
+
+
+```{r US_comfirmed_rate}
+US_rate <- US %>%
+  group_by(date) %>%
+  summarize(cases = sum(cases), Population = sum(Population)) %>%
+  mutate(rate = cases/Population) %>%
+  select(date,rate) %>%
+  ungroup()
+```
+
+```{r confirmed_rate_plot}
+confirmed_rate_plot = ggplot() + geom_line(data=CN_rate, aes(x=date, y=rate), color='steelblue',) + 
+  geom_line(data=US_rate, aes(x=date, y=rate), color='coral2') +
+  theme(legend.position = "bottom") +
+  labs(title = "Confirmed Rate in China and USA", y=NULL)
+confirmed_rate_plot
+```
+
+Blue line represents the confirmed rate in China and orange line is in the US. From the plot we can easily tell that after the middle of 2020, the US had a higher rate of confirmed cases than China and the number constantly increasing. By the start of 2023, more that 30% of American has been confirmed has COVID-19. China, on the other side, always has every low rate of confirmed cases.
+
+Let us take a look at the deaths rate of China and US by time. To do that, we need to look at `CN_death_rate` and `US_death_rate`.
+
+```{r CN_death_rate}
+CN_death_rate <- CN %>%
+  group_by(date) %>%
+  summarize(cases = sum(cases), deaths = sum(deaths)) %>%
+  mutate(death_rate = deaths/cases) %>%
+  select(date,death_rate) %>%
+  ungroup()
+```
+
+```{r US_deathg_rate}
+US_death_rate <- US %>%
+  group_by(date) %>%
+  summarize(cases = sum(cases), deaths = sum(deaths)) %>%
+  mutate(death_rate = deaths/cases) %>%
+  select(date,death_rate) %>%
+  ungroup()
+```
+
+
+
+```{r death_rate_plot}
+death_rate_plot = ggplot() + geom_line(data=CN_death_rate, aes(x=date, y=death_rate), color='steelblue',) + 
+  geom_line(data=US_death_rate, aes(x=date, y=death_rate), color='coral2') + scale_y_log10() +
+  theme(legend.position = "bottom") +
+  labs(title = "Death Rate in China and USA", y=NULL)
+death_rate_plot
+```
+
+In the plot above, the blue line represents the death rate of China, and orange line represents death rate of US. At the beginning of 2020, US had extremely high death rate and it kept dropping until the end. China had a. stable rate of death from 2020 to 2022 at around , the rate dropped to below  0.01 at the beginning of 2022 and rapidly increased in 2023.
+
+Regardless of the populations, how many people in these two countries died due to COVID-19?
+
+```{r}
+deaths_plot = ggplot() + geom_line(data=CN_total, aes(x=date, y=deaths/1000000), color='steelblue',) + 
+  geom_line(data=US_total, aes(x=date, y=deaths/1000000), color='coral2') +
+  theme(legend.position = "bottom") +
+  labs(title = "Total Deaths in China and USA in Million", y=NULL)
+deaths_plot
+```
+
+About 1.125 million people in America died due to COVID-19 and less than 0.15 million people in China died. By the beginning of 2023, the number of deaths in China increased rapidly.
+
+## Concluding from Visualizations
+In conclusion, the US always has higher rate of confirmed cases than China. The reason of the trend is China had very strict quarantine rules, people stayed at home for months to prevent getting COVID-19 and people wore N-95 masks when they go outside. The US, on the other hand, did not forbid people's activities. Even though masks are mandatory in public but not everyone's mask, such as home-made cloth mask, was able to prevent contiguous virus. In late 2022, China stopped quarantine. This action caused an rapid spreads of COVID-19 and also an increasing number of deaths due to COVID-19. Overall, the quarantine policy is useful considering public heath.
+
+## Data Modeling
+Let us look at the linear models of deaths over cases for both China and the US. Can we predict the number of deaths based on the number of cases?
+```{r deaths_model}
+CN_model <- lm(deaths ~ cases, data = CN_total)
+US_model <- lm(deaths ~ cases, data = US_total)
+```
+
+Here is the the model for China.
+```{r china_model}
+CN_model
+summary(CN_model)
+```
+
+Here we can see that the p-value is small enough to say that this model significant enough to describe the relationship between number of death and cases in China and it can be described as $\text{# of deaths} = 1731 + 0.009965(\text{# of cases})$
+
+Here is the the model for US.
+```{r US_model}
+US_model
+summary(US_model)
+```
+
+Here we can see that the p-value is small enough to say that this model significant enough to describe the relationship between number of death and cases in the US and it can be described as $\text{# of deaths} = 149800 + 0.01008(\text{# of cases})$
+
+## Bias
+#### Testing Bias
+In China, people did COVID-19 tests almost everyday during the pandemic no matter whether people feel sick or not. However, in the US, people did not get COVID-19 test unless they felt like they are sick. This caused the actual number of COVID-19 cases of America could be higher than the confirmed cases.
+
+#### Governmental and Political Bias
+Political and governmental factors can influence the transparency and accuracy of reported data. We are not sure if any of these two countries under reported or manipulated data for political reasons, leading to an incomplete or distorted picture of the pandemic.
+
+```{r session_info}
+sessionInfo()
+```

@@ -1,0 +1,170 @@
+---
+title: "NYPD Shooting Incident Report"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)
+library(ggplot2)
+```
+
+## About This Report
+
+The data that is use for this report is NYPD Shooting Incident Data (Historic). You can follow this link to find the data : https://data.cityofnewyork.us/api/views/833y-fsy8/rows.csv?accessType=DOWNLOAD. 
+This data is a breakdown of every shooting incident that occurred in NYC going back to 2006 through the end of the previous calendar year.
+
+This project focuses on the victims of the cases. Are there more victims from one ethnic group than the others? Do more people get shot in some months than the others? Which area of NYC has the largest number of shooting incident? I hope reading through this report can give you a basic concept of all these questions.
+
+### Inporting Data
+First, we import the data.
+
+```{r get_data}
+url_in <- "https://data.cityofnewyork.us/api/views/833y-fsy8/rows.csv?accessType=DOWNLOAD"
+cases <- read_csv(url_in, show_col_types = FALSE)
+```
+
+Now, we have the raw data. Let's take a look at the summary of the raw data.
+
+```{r raw_data, echo=FALSE}
+summary(cases)
+```
+
+### Cleaning Data
+
+Here, we remove the columns that are not needed.
+
+```{r remove_not_needed}
+cases <- cases %>%
+  select(-c(LOC_OF_OCCUR_DESC,LOC_CLASSFCTN_DESC,LOCATION_DESC,PERP_AGE_GROUP,
+            PERP_SEX,PERP_RACE,X_COORD_CD,Y_COORD_CD,Latitude,Longitude,
+            Lon_Lat,JURISDICTION_CODE))
+```
+
+Let's take a look at the data again.
+
+```{r, echo=FALSE}
+cases
+```
+
+By looking at the table, we can find that the date is still in `<chr>`, let's change it to `<date>`.
+
+```{r change_to_date}
+cases <- cases %>%
+  mutate(OCCUR_DATE = mdy(OCCUR_DATE))
+```
+
+The variables `BORO,VIC_AGE_GROUP,VIC_SEX,VIC_RACE` are still `<chr>`, which is not convenience for the future use. Let us change them to factors.
+
+```{r change_to_factors}
+cases <- cases %>%
+  mutate(BORO = as.factor(BORO)) %>%
+  mutate(VIC_AGE_GROUP = as.factor(VIC_AGE_GROUP)) %>%
+  mutate(VIC_SEX = as.factor(VIC_SEX)) %>%
+  mutate(VIC_RACE = as.factor(VIC_RACE))
+```
+
+Let's look at the data one more time.
+
+```{r, echo=FALSE}
+summary(cases)
+```
+
+We notice that in the `VIC_AGE_GROUP`. There is one factor that shows the age as 1022, which is impossible. As a typo, we should change it to `UNKNOWN`.
+
+```{r, change_typo}
+cases$VIC_AGE_GROUP[cases$VIC_AGE_GROUP == '1022'] = "UNKNOWN"
+cases$VIC_AGE_GROUP = droplevels(cases$VIC_AGE_GROUP)
+```
+
+```{r, echo=FALSE}
+summary(cases)
+```
+
+Before our data is ready to use, let's see if there is any missing data.
+
+```{r check_missing_data}
+cat('The number of missing data is',sum(is.na(cases)))
+```
+
+Now since the number of missing data is 0, our data is finally ready to be used.
+
+### Visualizing Data
+
+Here we summarize the number of shooting incidents by area and see if there are areas have more 
+incidents when the others.
+```{r group_by_area}
+cases_by_area <- cases %>%
+  group_by(BORO) %>%
+  summarize(num_cases = length(INCIDENT_KEY)) %>%
+  select(everything()) %>%
+  ungroup()
+```
+
+```{r bar_chart_by_area}
+p <- ggplot(data = cases_by_area, aes(x=BORO, y=num_cases)) + geom_bar(stat = "identity") +
+  labs(y="Numbers of cases", x = "Areas", title = "NYPD Shooting Incident by Areas")
+p
+```
+
+As we can see from the bar chart, Bronx and Brooklyn have more shooting incidents than the other areas of New York.
+
+Now we group the cases by race and see which races have larger numbers of shooting incidents than the others.
+
+
+```{r group_by_race}
+cases_by_race <- cases%>%
+  group_by(VIC_RACE) %>%
+  summarize(num_cases = length(INCIDENT_KEY)) %>%
+  select(everything()) %>%
+  ungroup()
+```
+
+```{r bar_chart_by_race}
+p <- ggplot(data = cases_by_race, aes(x=VIC_RACE, y=num_cases)) + 
+  geom_bar(stat = "identity") +
+  labs(y="Numbers of cases", x = "Races", 
+       title = "NYPD Shooting Incident by Races") +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))
+p
+```
+
+From this chart, it is easy to tell that most of the victims are black.
+
+### Conclusion from Visualizations
+From our observation, most of the victims are black people and people from Bronx and Brooklyn. This raised additional question that are there higher rate of black people in this two areas than the others?
+
+The bias in our data is that, New York City has 23.4% of black people, along with 39.8% of white and others ethnic group. So we can not draw the conclusion that black people have higher chance of being the victims of shooting incidents if we don't think about the population of each ethnic group. Also, Bronx and Brooklyn has higher density of population, it is unfair to say that these two areas have higher crime rate based on our data.
+
+
+### Making Models
+
+Let's make a model to tell the relation between month and number of incidents. To do that, we need to group all the cases by month first.
+
+```{r group_by_month}
+# Group incidents by each month
+cases_by_month <- cases%>%
+  group_by(month = lubridate::floor_date(OCCUR_DATE, 'month')) %>%
+  summarize(num_cases = length(INCIDENT_KEY)) %>%
+  select(everything()) %>%
+  mutate(month = format(month, "%m")) %>%
+  ungroup()
+```
+
+Now, we can make the model.
+```{r make_model}
+model = lm(num_cases ~ month, data = cases_by_month)
+model
+```
+
+Let's check whether the model is good enough to be used.
+```{r check_model}
+summary(model)
+```
+
+Here we can see that the p_value is small enough to say that this model is good enough to describe the relation between month and number of incident.
+
+```{r session_info}
+sessionInfo()
+```
